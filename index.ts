@@ -6,7 +6,6 @@
 
 import "./styles.css";
 
-import { EquicordDevs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { definePluginSettings } from "@api/Settings";
 
