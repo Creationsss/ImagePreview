@@ -6,53 +6,11 @@
 
 import "./styles.css";
 
+import { EquicordDevs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { definePluginSettings } from "@api/Settings";
 
-const settings = definePluginSettings({
-    messageImages: {
-        type: OptionType.BOOLEAN,
-        description: "Enable Message Images Hover Detection",
-        default: true,
-    },
-    messageAvatars: {
-        type: OptionType.BOOLEAN,
-        description: "Enable Message Avatars Hover Detection",
-        default: true,
-    },
-    messageLinks: {
-        type: OptionType.BOOLEAN,
-        description: "Enable Message Links Hover Detection",
-        default: true,
-    },
-    messageStickers: {
-        type: OptionType.BOOLEAN,
-        description: "Enable Message Stickers Hover Detection",
-        default: true,
-    },
-    hoverOutline: {
-        type: OptionType.BOOLEAN,
-        description: "Enable Hover Outline on Elements",
-        default: true,
-    },
-    hoverOutlineColor: {
-        type: OptionType.STRING,
-        description: "Hover Outline Color",
-        default: "red",
-    },
-    hoverOutlineSize: {
-        type: OptionType.STRING,
-        description: "Hover Outline Size",
-        default: "1px",
-    },
-    hoverDelay: {
-        type: OptionType.SLIDER,
-        description: "Display Hover Delay (seconds)",
-        markers: [0, 1, 2, 3, 4, 5],
-        default: 1,
-    },
-});
-
+const eventListeners: { element: HTMLElement, handler: (e: any) => void; }[] = [];
 let lastHoveredElement: HTMLElement | null = null;
 
 const mimeTypes = {
@@ -189,7 +147,7 @@ function addHoverEffect(element: HTMLElement, type: string) {
         }, hoverDelay);
     };
 
-    const movePreviewListener = (e: MouseEvent) => {
+    const movePreviewListener: (e: MouseEvent) => void = (e) => {
         positionPreviewDiv(previewDiv, e);
     };
 
@@ -205,6 +163,10 @@ function addHoverEffect(element: HTMLElement, type: string) {
     element.addEventListener("mouseenter", showPreview);
     element.addEventListener("mouseleave", removePreview);
     document.addEventListener("mousemove", movePreviewListener);
+
+    eventListeners.push({ element, handler: showPreview });
+    eventListeners.push({ element, handler: removePreview });
+    eventListeners.push({ element: previewDiv, handler: movePreviewListener });
 
     function positionPreviewDiv(previewDiv: HTMLElement, e: MouseEvent | null) {
         const previewWidth = previewDiv.offsetWidth;
@@ -257,8 +219,10 @@ function addHoverEffect(element: HTMLElement, type: string) {
 function handleHover(elements: NodeListOf<HTMLElement> | HTMLElement[], type: string) {
     elements.forEach((el) => {
         if (!el.dataset.hoverListenerAdded) {
-            el.addEventListener("mouseover", () => addHoverEffect(el, type));
+            const handler = () => addHoverEffect(el, type);
+            el.addEventListener("mouseover", handler);
             el.dataset.hoverListenerAdded = "true";
+            eventListeners.push({ element: el, handler });
         }
     });
 }
@@ -286,18 +250,83 @@ function stripDiscordParams(url: string) {
     return newUrl;
 }
 
+const settings = definePluginSettings({
+    messageImages: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Message Images Hover Detection",
+        default: true,
+    },
+    messageAvatars: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Message Avatars Hover Detection",
+        default: true,
+    },
+    messageLinks: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Message Links Hover Detection",
+        default: true,
+    },
+    messageStickers: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Message Stickers Hover Detection",
+        default: true,
+    },
+    hoverOutline: {
+        type: OptionType.BOOLEAN,
+        description: "Enable Hover Outline on Elements",
+        default: true,
+    },
+    hoverOutlineColor: {
+        type: OptionType.STRING,
+        description: "Hover Outline Color",
+        default: "red",
+    },
+    hoverOutlineSize: {
+        type: OptionType.STRING,
+        description: "Hover Outline Size",
+        default: "1px",
+    },
+    hoverDelay: {
+        type: OptionType.SLIDER,
+        description: "Display Hover Delay (seconds)",
+        markers: [0, 1, 2, 3, 4, 5],
+        default: 1,
+    },
+});
+
 export default definePlugin({
     name: "Image Preview",
     description: "Hover on images, avatars, links, guild icons, and stickers to show a full preview.",
-    authors: [
-        {
-            name: "Creation's",
-            id: "209830981060788225"
-        }
-    ],
+    authors: [EquicordDevs.creations],
     settings: settings,
 
     start() {
+        function initialScan() {
+            const appContainer = document.querySelector('[class*="app-"]');
+            if (appContainer) {
+                if (settings.store.messageImages) {
+                    handleHover(appContainer.querySelectorAll('[data-role="img"]'), "messageImages");
+                }
+
+                if (settings.store.messageAvatars) {
+                    handleHover(appContainer.querySelectorAll('img[src*="cdn.discordapp.com/avatars/"], img[src*="cdn.discordapp.com/guilds/"], img[src^="/assets/"][class*="avatar"]'), "messageAvatars");
+                }
+
+                if (settings.store.messageLinks) {
+                    appContainer.querySelectorAll("span").forEach((span) => {
+                        const url = span.textContent?.replace(/<[^>]*>?/gm, "");
+                        if (url && (url.startsWith("http://") || url.startsWith("https://")) && isLinkAnImage(url)) {
+                            handleHover([span], "messageLinks");
+                        }
+                    });
+                }
+
+                if (settings.store.messageStickers) {
+                    handleHover(appContainer.querySelectorAll('img[data-type="sticker"]'), "messageStickers");
+                }
+            }
+        }
+
         const observer = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
                 if (mutation.type === "childList") {
@@ -338,10 +367,31 @@ export default definePlugin({
         if (appContainer) {
             observer.observe(appContainer, { childList: true, subtree: true });
         }
+
+        initialScan();
+
         this.observer = observer;
     },
 
     stop() {
-        this.observer?.disconnect();
+        this.observer.disconnect();
+
+        eventListeners.forEach(({ element, handler }) => {
+            element.removeEventListener("mouseover", handler);
+            element.removeEventListener("mouseenter", handler);
+            element.removeEventListener("mouseleave", handler);
+            element.removeEventListener("mousemove", handler);
+        });
+
+        eventListeners.length = 0;
+
+        document.querySelectorAll("[data-hover-listener-added]").forEach((el) => {
+            el.removeAttribute("data-hover-listener-added");
+            (el as HTMLElement).style.outline = "";
+        });
+
+        document.querySelectorAll(".preview-div").forEach((preview) => {
+            preview.remove();
+        });
     }
 });
