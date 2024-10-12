@@ -7,7 +7,6 @@
 import "./styles.css";
 
 import { definePluginSettings } from "@api/Settings";
-import { EquicordDevs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 
 const eventListeners: { element: HTMLElement, handler: (e: any) => void; }[] = [];
@@ -387,7 +386,9 @@ const settings = definePluginSettings({
 export default definePlugin({
     name: "ImagePreview",
     description: "Hover on images, avatars, links, and stickers to show a full preview.",
-    authors: [EquicordDevs.creations],
+    authors: [
+        { name: "Creation's", id: 209830981060788225n }
+    ],
     settings: settings,
 
     start() {
