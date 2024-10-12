@@ -6,9 +6,9 @@
 
 import "./styles.css";
 
+import { definePluginSettings } from "@api/Settings";
 import { EquicordDevs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
-import { definePluginSettings } from "@api/Settings";
 
 const eventListeners: { element: HTMLElement, handler: (e: any) => void; }[] = [];
 let lastHoveredElement: HTMLElement | null = null;
@@ -25,6 +25,8 @@ const mimeTypes = {
     mov: "video/quicktime",
 };
 
+const formatDimension = (value) => value % 1 === 0 ? value : value.toFixed(2);
+
 function getMimeType(extension: string | undefined): [boolean, string] {
     if (!extension) return [false, ""];
 
@@ -33,26 +35,22 @@ function getMimeType(extension: string | undefined): [boolean, string] {
 }
 
 function addHoverEffect(element: HTMLElement, type: string) {
-    let hoverElementActual;
+    let isManualResizing: boolean = false;
+    let isOutlining: boolean = true;
 
     if (settings.store.hoverOutline) {
         if (type === "messageImages") {
-            hoverElementActual = element.closest('[id^="message-accessories-"]')?.querySelector('div')?.querySelector('div') || element;
-
-            if (!(hoverElementActual instanceof HTMLDivElement)) {
-                hoverElementActual = element;
-            }
+            element.style.border = `${settings.store.hoverOutlineSize} dotted ${settings.store.hoverOutlineColor}`;
+            isOutlining = false;
         } else {
-            hoverElementActual = element.querySelector("img") || element;
+            element.style.outline = `${settings.store.hoverOutlineSize} dotted ${settings.store.hoverOutlineColor}`;
         }
-
-        hoverElementActual.style.outline = `${settings.store.hoverOutlineSize} dotted ${settings.store.hoverOutlineColor}`;
     }
 
     const url = element.getAttribute("data-safe-src") || element.getAttribute("src") || element.getAttribute("href") || element.textContent;
 
     if (!url) {
-        hoverElementActual.style.outline = "";
+        isOutlining ? element.style.outline = "" : element.style.border = "";
         return;
     }
 
@@ -61,7 +59,7 @@ function addHoverEffect(element: HTMLElement, type: string) {
     const [allowed, mimeType] = getMimeType(fileName.split(".").pop());
 
     if (!allowed) {
-        hoverElementActual.style.outline = "";
+        isOutlining ? element.style.outline = "" : element.style.border = "";
         return;
     }
 
@@ -107,16 +105,68 @@ function addHoverEffect(element: HTMLElement, type: string) {
     const dimensionsOriginal = document.createElement("span");
     dimensionsOriginal.classList.add("dimensions-original");
 
-    mediaElement.onload = mediaElement.onloadstart = () => {
+    dimensionsDiv.appendChild(dimensionsDisplaying);
+    dimensionsDiv.appendChild(dimensionsOriginal);
+    previewHeader.appendChild(dimensionsDiv);
+
+    previewDiv.appendChild(previewHeader);
+    previewDiv.appendChild(mediaElement);
+
+    document.body.appendChild(previewDiv);
+    previewDiv.style.display = "none";
+
+    const hoverDelay = settings.store.hoverDelay * 1000;
+    let timeout;
+    let isMediaLoaded = false;
+
+    const startLoading = () => {
         if (isImage) {
-            dimensionsDisplaying.textContent = `Displaying: ${mediaElement.width}x${mediaElement.height}`;
+            mediaElement.onload = () => {
+                isMediaLoaded = true;
+                setMediaDimensions();
+            };
+        } else if (isVideo) {
+            mediaElement.onloadeddata = () => {
+                isMediaLoaded = true;
+                setMediaDimensions();
+            };
+        }
+    };
+
+    const setMediaDimensions = () => {
+        if (isManualResizing) {
+            return;
+        }
+
+        if (isImage) {
+            const maxHeight = window.innerHeight * 0.9;
+            if (mediaElement.naturalHeight > maxHeight) {
+                const aspectRatio = mediaElement.naturalWidth / mediaElement.naturalHeight;
+                mediaElement.height = maxHeight;
+                mediaElement.width = maxHeight * aspectRatio;
+            } else {
+                mediaElement.width = mediaElement.naturalWidth;
+                mediaElement.height = mediaElement.naturalHeight;
+            }
+            dimensionsDisplaying.textContent = `Displaying: ${formatDimension(mediaElement.width)}x${formatDimension(mediaElement.height)}`;
             dimensionsOriginal.textContent = `Original: ${mediaElement.naturalWidth}x${mediaElement.naturalHeight}`;
         } else if (isVideo) {
-            dimensionsDisplaying.textContent = `Displaying: ${mediaElement.videoWidth}x${mediaElement.videoHeight}`;
+            const maxHeight = window.innerHeight * 0.9;
+            if (mediaElement.videoHeight > maxHeight) {
+                const aspectRatio = mediaElement.videoWidth / mediaElement.videoHeight;
+                mediaElement.height = maxHeight;
+                mediaElement.width = maxHeight * aspectRatio;
+            } else {
+                mediaElement.width = mediaElement.videoWidth;
+                mediaElement.height = mediaElement.videoHeight;
+            }
+            dimensionsDisplaying.textContent = `Displaying: ${formatDimension(mediaElement.width)}x${formatDimension(mediaElement.height)}`;
             dimensionsOriginal.textContent = `Original: ${mediaElement.videoWidth}x${mediaElement.videoHeight}`;
         }
 
-        if (mediaElement.width < 200) {
+        const width: number = isImage ? mediaElement.width : mediaElement.videoWidth;
+
+        if (width < 200) {
             previewHeader.style.flexDirection = "column";
             previewHeader.style.alignItems = "center";
             previewHeader.style.justifyContent = "center";
@@ -127,59 +177,111 @@ function addHoverEffect(element: HTMLElement, type: string) {
         }
     };
 
-    dimensionsDiv.appendChild(dimensionsDisplaying);
-    dimensionsDiv.appendChild(dimensionsOriginal);
-    previewHeader.appendChild(dimensionsDiv);
-
-    previewDiv.appendChild(previewHeader);
-    previewDiv.appendChild(mediaElement);
-
-    document.body.appendChild(previewDiv);
-
-    const hoverDelay = settings.store.hoverDelay * 1000;
-    let timeout;
-
     const showPreview = () => {
         timeout = setTimeout(() => {
-            previewDiv.style.display = "block";
-            hoverElementActual.style.outline = `${settings.store.hoverOutlineSize} dotted ${settings.store.hoverOutlineColor}`;
-            positionPreviewDiv(previewDiv, null);
-        }, hoverDelay);
-    };
+            if (isMediaLoaded) {
+                previewDiv.style.display = "block";
+                positionPreviewDiv(previewDiv);
+            }
+            if (element) isOutlining ? element.style.outline = "" : element.style.border = "";
 
-    const movePreviewListener: (e: MouseEvent) => void = (e) => {
-        positionPreviewDiv(previewDiv, e);
+        }, hoverDelay);
     };
 
     const removePreview = () => {
         clearTimeout(timeout);
+        timeout = null;
+        isMediaLoaded = false;
         previewDiv.remove();
-        document.removeEventListener("mousemove", movePreviewListener);
-        if (hoverElementActual) {
-            hoverElementActual.style.outline = "";
+        if (element) {
+            isOutlining ? element.style.outline = "" : element.style.border = "";
         }
     };
 
-    element.addEventListener("mouseenter", showPreview);
-    element.addEventListener("mouseleave", removePreview);
-    document.addEventListener("mousemove", movePreviewListener);
+    const adjustPreviewSize = (e: WheelEvent) => {
+        if (e.ctrlKey) {
+            e.preventDefault();
+            isManualResizing = true;
+            const delta = e.deltaY > 0 ? -20 : 20;
+            let newWidth: number;
+            let aspectRatio: number;
 
+            if (isImage) {
+                newWidth = Math.max(100, mediaElement.width + delta);
+                aspectRatio = mediaElement.naturalWidth / mediaElement.naturalHeight;
+
+                mediaElement.width = newWidth;
+                mediaElement.height = newWidth / aspectRatio;
+
+                dimensionsDisplaying.textContent = `Displaying: ${formatDimension(mediaElement.width)}x${formatDimension(mediaElement.height)}`;
+            } else if (isVideo) {
+                newWidth = Math.max(100, mediaElement.clientWidth + delta);
+                aspectRatio = mediaElement.videoWidth / mediaElement.videoHeight;
+
+                mediaElement.style.width = `${newWidth}px`;
+                mediaElement.style.height = `${newWidth / aspectRatio}px`;
+
+                dimensionsDisplaying.textContent = `Displaying: ${formatDimension(newWidth)}x${formatDimension(newWidth / aspectRatio)}`;
+            }
+
+            positionPreviewDiv(previewDiv);
+        }
+    };
+
+    const showPreviewHandler = () => {
+        startLoading();
+        isManualResizing = false;
+        showPreview();
+    };
+
+    element.addEventListener("mouseenter", showPreviewHandler);
+    element.addEventListener("mouseleave", removePreview);
+    element.addEventListener("wheel", adjustPreviewSize);
+
+    eventListeners.push({ element, handler: showPreviewHandler });
     eventListeners.push({ element, handler: showPreview });
     eventListeners.push({ element, handler: removePreview });
-    eventListeners.push({ element: previewDiv, handler: movePreviewListener });
+    eventListeners.push({ element, handler: adjustPreviewSize });
 
-    function positionPreviewDiv(previewDiv: HTMLElement, e: MouseEvent | null) {
+    function positionPreviewDiv(previewDiv) {
         const previewWidth = previewDiv.offsetWidth;
         const previewHeight = previewDiv.offsetHeight;
         const pageWidth = window.innerWidth;
         const pageHeight = window.innerHeight;
 
-        const mouseX = e ? e.pageX : window.innerWidth / 2;
-        const mouseY = e ? e.pageY : window.innerHeight / 2;
+        let left = 0;
+        let top = 0;
 
-        let left = mouseX + 10;
-        let top = mouseY + 10;
+        switch (settings.store.previewPosition) {
+            case "top-left":
+                left = 10;
+                top = 10;
+                break;
+            case "top-right":
+                left = pageWidth - previewWidth - 10;
+                top = 10;
+                break;
+            case "bottom-left":
+                left = 10;
+                top = pageHeight - previewHeight - 10;
+                break;
+            case "bottom-right":
+                left = pageWidth - previewWidth - 10;
+                top = pageHeight - previewHeight - 10;
+                break;
+            case "center":
+            default:
+                left = (pageWidth - previewWidth) / 2;
+                top = (pageHeight - previewHeight) / 2;
+                break;
+        }
 
+        if (left < 10) {
+            left = 10;
+        }
+        if (top < 10) {
+            top = 10;
+        }
         if (left + previewWidth > pageWidth) {
             left = pageWidth - previewWidth - 10;
         }
@@ -189,35 +291,11 @@ function addHoverEffect(element: HTMLElement, type: string) {
 
         previewDiv.style.left = `${left}px`;
         previewDiv.style.top = `${top}px`;
-
-        const maxImageWidth = pageWidth - 20;
-        const maxImageHeight = pageHeight - 20;
-
-        if (isImage) {
-            if (mediaElement.naturalWidth > maxImageWidth || mediaElement.naturalHeight > maxImageHeight) {
-                const aspectRatio = mediaElement.naturalWidth / mediaElement.naturalHeight;
-
-                if (mediaElement.naturalWidth > maxImageWidth) {
-                    mediaElement.width = maxImageWidth;
-                    mediaElement.height = maxImageWidth / aspectRatio;
-                }
-                if (mediaElement.height > maxImageHeight) {
-                    mediaElement.height = maxImageHeight;
-                    mediaElement.width = maxImageHeight * aspectRatio;
-                }
-            } else {
-                mediaElement.width = mediaElement.naturalWidth;
-                mediaElement.height = mediaElement.naturalHeight;
-            }
-        }
-
-        dimensionsDisplaying.textContent = isImage ? `Displaying: ${mediaElement.width}x${mediaElement.height}` : `Displaying: ${mediaElement.videoWidth}x${mediaElement.videoHeight}`;
-        dimensionsOriginal.textContent = isImage ? `Original: ${mediaElement.naturalWidth}x${mediaElement.naturalHeight}` : `Original: ${mediaElement.videoWidth}x${mediaElement.videoHeight}`;
     }
 }
 
 function handleHover(elements: NodeListOf<HTMLElement> | HTMLElement[], type: string) {
-    elements.forEach((el) => {
+    elements.forEach(el => {
         if (!el.dataset.hoverListenerAdded) {
             const handler = () => addHoverEffect(el, type);
             el.addEventListener("mouseover", handler);
@@ -292,15 +370,30 @@ const settings = definePluginSettings({
         markers: [0, 1, 2, 3, 4, 5],
         default: 1,
     },
+    previewPosition: {
+        type: OptionType.SELECT,
+        description: "Preview Position",
+        default: "center",
+        options: [
+            { value: "center", label: "Center" },
+            { value: "top-left", label: "Top Left" },
+            { value: "top-right", label: "Top Right" },
+            { value: "bottom-left", label: "Bottom Left" },
+            { value: "bottom-right", label: "Bottom Right" },
+        ]
+    }
 });
 
 export default definePlugin({
-    name: "Image Preview",
-    description: "Hover on images, avatars, links, guild icons, and stickers to show a full preview.",
+    name: "ImagePreview",
+    description: "Hover on images, avatars, links, and stickers to show a full preview.",
     authors: [EquicordDevs.creations],
     settings: settings,
 
     start() {
+        let timeout: number | undefined;
+        let previewDiv: HTMLDivElement | null = null;
+
         function initialScan() {
             const appContainer = document.querySelector('[class*="app-"]');
             if (appContainer) {
@@ -313,7 +406,7 @@ export default definePlugin({
                 }
 
                 if (settings.store.messageLinks) {
-                    appContainer.querySelectorAll("span").forEach((span) => {
+                    appContainer.querySelectorAll("span").forEach(span => {
                         const url = span.textContent?.replace(/<[^>]*>?/gm, "");
                         if (url && (url.startsWith("http://") || url.startsWith("https://")) && isLinkAnImage(url)) {
                             handleHover([span], "messageLinks");
@@ -327,10 +420,15 @@ export default definePlugin({
             }
         }
 
-        const observer = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
+        const observer = new MutationObserver(mutations => {
+            mutations.forEach(mutation => {
                 if (mutation.type === "childList") {
-                    mutation.addedNodes.forEach((addedNode) => {
+                    mutation.removedNodes.forEach(removedNode => {
+                        if (removedNode instanceof HTMLElement && lastHoveredElement && removedNode.contains(lastHoveredElement)) {
+                            removePreview();
+                        }
+                    });
+                    mutation.addedNodes.forEach(addedNode => {
                         if (addedNode instanceof HTMLElement) {
                             const element = addedNode as HTMLElement;
 
@@ -346,7 +444,7 @@ export default definePlugin({
                             }
 
                             if (settings.store.messageLinks) {
-                                element.querySelectorAll("span").forEach((span) => {
+                                element.querySelectorAll("span").forEach(span => {
                                     const url = span.textContent?.replace(/<[^>]*>?/gm, "");
                                     if (url && (url.startsWith("http://") || url.startsWith("https://")) && isLinkAnImage(url)) {
                                         handleHover([span], "messageLinks");
@@ -371,6 +469,12 @@ export default definePlugin({
         initialScan();
 
         this.observer = observer;
+
+        const removePreview = () => {
+            if (timeout) clearTimeout(timeout);
+            if (previewDiv) (previewDiv as HTMLDivElement).remove();
+            lastHoveredElement = null;
+        };
     },
 
     stop() {
@@ -385,12 +489,12 @@ export default definePlugin({
 
         eventListeners.length = 0;
 
-        document.querySelectorAll("[data-hover-listener-added]").forEach((el) => {
+        document.querySelectorAll("[data-hover-listener-added]").forEach(el => {
             el.removeAttribute("data-hover-listener-added");
             (el as HTMLElement).style.outline = "";
         });
 
-        document.querySelectorAll(".preview-div").forEach((preview) => {
+        document.querySelectorAll(".preview-div").forEach(preview => {
             preview.remove();
         });
     }
